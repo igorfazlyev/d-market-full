@@ -26,6 +26,7 @@ const PatientDashboard = () => {
     plans: 0,
     appointments: 0,
   });
+  const [error, setError] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -35,18 +36,20 @@ const PatientDashboard = () => {
   const loadDashboard = async () => {
     try {
       const [scansRes, plansRes, appointmentsRes] = await Promise.all([
-        patientAPI.getScans(),
-        patientAPI.getTreatmentPlans(),
-        patientAPI.getAppointments(),
+        patientAPI.getScans().catch(() => []),
+        patientAPI.getTreatmentPlans().catch(() => []),
+        patientAPI.getAppointments().catch(() => []),
       ]);
 
+      // Backend returns arrays directly, not wrapped in {data: ...}
       setStats({
-        scans: scansRes.data.length,
-        plans: plansRes.data.length,
-        appointments: appointmentsRes.data.length,
+        scans: Array.isArray(scansRes) ? scansRes.length : 0,
+        plans: Array.isArray(plansRes) ? plansRes.length : 0,
+        appointments: Array.isArray(appointmentsRes) ? appointmentsRes.length : 0,
       });
     } catch (error) {
       console.error('Failed to load dashboard:', error);
+      setError(error.message);
     } finally {
       setLoading(false);
     }
@@ -95,6 +98,12 @@ const PatientDashboard = () => {
       <Typography variant="subtitle1" color="text.secondary" sx={{ mb: 4 }}>
         Управление вашими снимками, планами лечения и записями
       </Typography>
+
+      {error && (
+        <Alert severity="error" sx={{ mb: 3 }}>
+          Ошибка загрузки данных: {error}
+        </Alert>
+      )}
 
       <Alert severity="info" sx={{ mb: 3 }}>
         У вас есть {stats.plans} активных плана лечения. Просмотрите предложения от клиник!

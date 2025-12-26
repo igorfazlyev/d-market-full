@@ -1,144 +1,131 @@
-import axios from 'axios';
+// Get API URL from environment variable or use default
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
-
-const api = axios.create({
-  baseURL: API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-});
-
-// Request interceptor to add token
-api.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('access_token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+// Common API functions
+export const commonAPI = {
+  getConstants: async () => {
+    const response = await fetch(`${API_URL}/api/constants`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch constants');
     }
-    return config;
-  },
-  (error) => {
-    return Promise.reject(error);
+    return response.json();
   }
-);
+};
 
-// Response interceptor to handle errors
-api.interceptors.response.use(
-  (response) => response,
-  async (error) => {
-    const originalRequest = error.config;
-
-    // If 401 and not already retried, try to refresh token
-    if (error.response?.status === 401 && !originalRequest._retry) {
-      originalRequest._retry = true;
-
-      try {
-        const refreshToken = localStorage.getItem('refresh_token');
-        const response = await axios.post(`${API_BASE_URL}/api/auth/refresh`, {
-          refresh_token: refreshToken,
-        });
-
-        const { access_token } = response.data;
-        localStorage.setItem('access_token', access_token);
-
-        originalRequest.headers.Authorization = `Bearer ${access_token}`;
-        return api(originalRequest);
-      } catch (refreshError) {
-        // Refresh failed, logout user
-        localStorage.clear();
-        window.location.href = '/login';
-        return Promise.reject(refreshError);
-      }
-    }
-
-    return Promise.reject(error);
-  }
-);
-
-// Auth APIs
+// Auth API functions
 export const authAPI = {
-  login: (username, password) =>
-    api.post('/api/auth/login', { username, password }),
-  
-  getCurrentUser: () => api.get('/api/auth/me'),
-  
-  logout: () => {
-    localStorage.clear();
+  login: async (username, password) => {
+    const response = await fetch(`${API_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ username, password }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.message || 'Login failed');
+    }
+
+    return response.json();
   },
+
+  refreshToken: async (refreshToken) => {
+    const response = await fetch(`${API_URL}/api/auth/refresh`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Token refresh failed');
+    }
+
+    return response.json();
+  }
 };
 
-// Patient APIs
+// Helper function to make authenticated requests
+const authenticatedFetch = async (url, options = {}) => {
+  const token = localStorage.getItem('token');
+  
+  const headers = {
+    'Content-Type': 'application/json',
+    ...options.headers,
+  };
+
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(`${API_URL}${url}`, {
+    ...options,
+    headers,
+  });
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      // Token expired, redirect to login
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      window.location.href = '/login';
+      throw new Error('Unauthorized');
+    }
+    const error = await response.json();
+    throw new Error(error.message || 'Request failed');
+  }
+
+  return response.json();
+};
+
+// Patient API functions
 export const patientAPI = {
-  getScans: () => api.get('/api/patient/scans'),
+  getScans: () => authenticatedFetch('/api/patient/scans'),
+  getTreatmentPlans: () => authenticatedFetch('/api/patient/plans'),
+  getOffers: (planId) => authenticatedFetch(`/api/patient/plans/${planId}/offers`),
   
-  getScanById: (id) => api.get(`/api/patient/scans/${id}`),
-  
-  getTreatmentPlans: () => api.get('/api/patient/plans'),
-  
-  getTreatmentPlan: (scanId) => api.get(`/api/patient/scans/${scanId}/plan`),
-  
-  getOffers: (planId) => api.get(`/api/patient/plans/${planId}/offers`),
-  
-  selectOffer: (offerId) => api.post('/api/patient/select-offer', { offer_id: offerId }),
-  
-  getAppointments: () => api.get('/api/patient/appointments'),
-  
-  createReview: (clinicId, rating, comment) =>
-    api.post('/api/patient/reviews', { clinic_id: clinicId, rating, comment }),
-  
-  createComplaint: (clinicId, subject, description) =>
-    api.post('/api/patient/complaints', { clinic_id: clinicId, subject, description }),
-  
-  updateSearchCriteria: (city, district, priceSegment) =>
-    api.post('/api/patient/search-criteria', { city, district, price_segment: priceSegment }),
+  // New methods for appointments
+  getAppointments: () => authenticatedFetch('/api/patient/appointments'),
+  bookAppointment: (appointmentData) => authenticatedFetch('/api/patient/appointments', {
+    method: 'POST',
+    body: JSON.stringify(appointmentData),
+  }),
+  getClinics: () => authenticatedFetch('/api/patient/clinics'),
+  getProfile: () => authenticatedFetch('/api/patient/profile'),
 };
 
-// Clinic APIs
+// Clinic API functions
 export const clinicAPI = {
-  getDashboard: (period = '30d') => api.get(`/api/clinic/dashboard?period=${period}`),
+  getDashboard: () => authenticatedFetch('/api/clinic/dashboard'),
+  getIncomingPlans: () => authenticatedFetch('/api/clinic/incoming-plans'),
+  getPriceList: () => authenticatedFetch('/api/clinic/price-list'),
   
-  getIncomingPlans: () => api.get('/api/clinic/incoming-plans'),
-  
-  createOffer: (offerData) => api.post('/api/clinic/offers', offerData),
-  
-  getLeads: () => api.get('/api/clinic/leads'),
-  
-  getAppointments: (status) =>
-    api.get('/api/clinic/appointments', { params: { status } }),
-  
-  updateAppointment: (id, status, notes) =>
-    api.put(`/api/clinic/appointments/${id}`, { status, notes }),
-  
-  getPriceList: (specialization) =>
-    api.get('/api/clinic/price-list', { params: { specialization } }),
-  
-  updatePriceList: (items) => api.put('/api/clinic/price-list', items),
-  
-  getAnalytics: (period = '30d') => api.get(`/api/clinic/analytics?period=${period}`),
+  // New methods for appointments
+  getAppointments: () => authenticatedFetch('/api/clinic/appointments'),
+  updateAppointmentStatus: (appointmentId, status) => authenticatedFetch(`/api/clinic/appointments/${appointmentId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  }),
+  getProfile: () => authenticatedFetch('/api/clinic/profile'),
+  updateProfile: (profileData) => authenticatedFetch('/api/clinic/profile', {
+    method: 'PUT',
+    body: JSON.stringify(profileData),
+  }),
 };
 
-// Regulator APIs
+// Regulator API functions
 export const regulatorAPI = {
-  getDashboard: (period = '30d') => api.get(`/api/regulator/dashboard?period=${period}`),
+  getDashboard: () => authenticatedFetch('/api/regulator/dashboard'),
+  getStatistics: () => authenticatedFetch('/api/regulator/statistics'),
+  getClinics: () => authenticatedFetch('/api/regulator/clinics'),
   
-  getStatistics: (period = '30d', clinicId = null) => {
-    const params = { period };
-    if (clinicId) params.clinic_id = clinicId;
-    return api.get('/api/regulator/statistics', { params });
-  },
-  
-  getClinics: (city, district) =>
-    api.get('/api/regulator/clinics', { params: { city, district } }),
-  
-  getClinicDetails: (id, period = '30d') =>
-    api.get(`/api/regulator/clinics/${id}?period=${period}`),
-  
-  getComplaints: (status) =>
-    api.get('/api/regulator/complaints', { params: { status } }),
-  
-  getDiseaseAnalytics: (period = '30d') =>
-    api.get(`/api/regulator/disease-analytics?period=${period}`),
+  // New methods for appointments
+  getAppointments: () => authenticatedFetch('/api/regulator/appointments'),
+  updateClinicStatus: (clinicId, status) => authenticatedFetch(`/api/regulator/clinics/${clinicId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  }),
 };
-
-export default api;
