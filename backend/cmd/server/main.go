@@ -31,14 +31,9 @@ func main() {
 	}
 	defer db.Close()
 
-	// Run migrations
+	// Run migrations (includes seeding)
 	if err := db.AutoMigrate(); err != nil {
 		log.Fatalf("Failed to run migrations: %v", err)
-	}
-
-	// Seed database
-	if err := db.Seed(); err != nil {
-		log.Fatalf("Failed to seed database: %v", err)
 	}
 
 	// Initialize JWT manager
@@ -48,8 +43,9 @@ func main() {
 		cfg.JWT.RefreshExpiry,
 	)
 
-	// Initialize repository
+	// Initialize repositories
 	repo := repository.NewRepository(db.DB)
+	constantsRepo := repository.NewConstantsRepository(db.DB)
 
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(repo, jwtManager)
@@ -58,7 +54,7 @@ func main() {
 	regulatorHandler := handlers.NewRegulatorHandler(repo)
 
 	// Setup router
-	router := setupRouter(authHandler, patientHandler, clinicHandler, regulatorHandler, jwtManager)
+	router := setupRouter(authHandler, patientHandler, clinicHandler, regulatorHandler, constantsRepo, jwtManager)
 
 	// Print startup information
 	printStartupInfo(cfg)
@@ -70,12 +66,13 @@ func main() {
 	}
 }
 
-// set up router function goes here
+// setupRouter configures all API routes
 func setupRouter(
 	authHandler *handlers.AuthHandler,
 	patientHandler *handlers.PatientHandler,
 	clinicHandler *handlers.ClinicHandler,
 	regulatorHandler *handlers.RegulatorHandler,
+	constantsRepo *repository.ConstantsRepository,
 	jwtManager *auth.JWTManager,
 ) *gin.Engine {
 	router := gin.Default()
@@ -101,6 +98,10 @@ func setupRouter(
 			auth.POST("/login", authHandler.Login)
 			auth.POST("/refresh", authHandler.RefreshToken)
 		}
+
+		// Constants endpoint (public - no auth required)
+		commonHandler := handlers.NewCommonHandler(constantsRepo)
+		api.GET("/constants", commonHandler.GetConstants)
 
 		// Protected routes - require authentication
 		protected := api.Group("")
@@ -190,6 +191,7 @@ func printStartupInfo(cfg *config.Config) {
 	log.Println("")
 	log.Println("📡 API Endpoints:")
 	log.Printf("   Health Check:   http://localhost:%s/health", cfg.Server.Port)
+	log.Printf("   Constants:      http://localhost:%s/api/constants", cfg.Server.Port)
 	log.Printf("   Login:          http://localhost:%s/api/auth/login", cfg.Server.Port)
 	log.Printf("   API Docs:       http://localhost:%s/api", cfg.Server.Port)
 	log.Println("")
@@ -201,6 +203,7 @@ func printStartupInfo(cfg *config.Config) {
 	log.Println("   ✓ Regulator Dashboard")
 	log.Println("   ✓ Treatment Plans & Offers")
 	log.Println("   ✓ Analytics & Statistics")
+	log.Println("   ✓ Database-driven Constants")
 	log.Println("")
 	log.Println("====================================================")
 	log.Printf("🚀 Server starting on http://localhost:%s", cfg.Server.Port)
